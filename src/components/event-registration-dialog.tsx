@@ -1,5 +1,11 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Loader2, Ticket, UserCheck, XCircle } from 'lucide-react';
+
 import {
   Dialog,
   DialogContent,
@@ -20,200 +26,167 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+
+import { supabase } from '@/supabase';
 import { useAuth } from '@/supabase';
-import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/supabase/non-blocking-updates';
-import { useToast } from '@/hooks/use-toast';
 import type { Event, User, Registration } from '@/lib/types';
-import { useState, useEffect } from 'react';
-import { Loader2, Ticket, UserCheck, XCircle } from 'lucide-react';
-import { sendEmail, generateRegistrationConfirmationEmail } from '@/lib/email-service';
-import { formatDate, formatTime } from '@/lib/utils';
-import { createReminder, getDefaultReminderTime } from '@/lib/reminder-service';
+import { useToast } from '@/hooks/use-toast';
 
 const registrationSchema = z.object({
-  fullName: z.string().min(3, 'Full name is required.'),
-  rollNumber: z.string().min(3, 'Roll number is required.'),
-  branch: z.string().min(2, 'Branch is required.'),
-  section: z.string().min(1, 'Section is required.'),
+  fullName: z.string().min(3, 'Full name is required'),
+  roll_number: z.string().min(3, 'Roll number is required'),
+  branch: z.string().min(2, 'Branch is required'),
+  section: z.string().min(1, 'Section is required'),
 });
 
 type RegistrationFormValues = z.infer<typeof registrationSchema>;
 
-interface EventRegistrationDialogProps {
+interface Props {
   event: Event;
   userProfile: User;
   isRegistered: boolean;
   registration: Registration | null;
 }
 
-export default function EventRegistrationDialog({ event, userProfile, isRegistered, registration }: EventRegistrationDialogProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const { toast } = useToast();
+export default function EventRegistrationDialog({
+  event,
+  userProfile,
+  isRegistered,
+  registration,
+}: Props) {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
 
   const form = useForm<RegistrationFormValues>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
-      fullName: `${userProfile.first_name} ${userProfile.last_name}` || '',
-      rollNumber: userProfile.rollNumber || '',
-      branch: userProfile.branch || '',
-      section: userProfile.section || '',
+      fullName: `${userProfile.first_name ?? ''} ${userProfile.last_name ?? ''}`.trim(),
+      roll_number: userProfile.roll_number ?? '',
+      branch: userProfile.branch ?? '',
+      section: userProfile.section ?? '',
     },
   });
-  
+
   useEffect(() => {
+    if (!registration) return;
+
     form.reset({
-      fullName: registration?.fullName || `${userProfile.first_name} ${userProfile.last_name}` || '',
-      rollNumber: registration?.rollNumber || userProfile.rollNumber || '',
-      branch: registration?.branch || userProfile.branch || '',
-      section: registration?.section || userProfile.section || '',
-    })
-  }, [userProfile, registration, form]);
+      fullName: registration.full_name,
+      roll_number: registration.roll_number ?? '',
+      branch: registration.branch ?? '',
+      section: registration.section ?? '',
+    });
+  }, [registration, form]);
 
-  const onSubmit = async (data: RegistrationFormValues) => {
-    if (!user?.id) return;
+  // 🔹 REGISTER
+  const onSubmit = async (values: RegistrationFormValues) => {
+    if (!user) return;
 
-    const registrationData = {
-      ...data,
-      // legacy camelCase for compatibility in UI that reads it
-      eventId: event.id,
-      userId: user.id,
+    const payload = {
+      event_id: event.id,
+      user_id: user.id,
+      full_name: values.fullName,
       email: userProfile.email,
-      registrationDate: new Date().toISOString(),
+      roll_number: values.roll_number,
+      branch: values.branch,
+      section: values.section,
       title: event.title,
       date: event.date,
-      // new schema snake_case
-      event_id: event.id as any,
-      user_id: user.id,
-      registered_at: new Date().toISOString(),
-    } as any;
+      registration_date: new Date().toISOString(),
+    };
 
-    try {
-      // Create registration
-      await addDocumentNonBlocking('registrations', registrationData);
+    const { error } = await supabase.from('registrations').insert(payload);
 
-      // Optionally update legacy counter if present
-      if (typeof (event as any).registrationCount === 'number') {
-        await updateDocumentNonBlocking('events', {
-          registrationCount: ((event as any).registrationCount || 0) + 1
-        }, event.id);
-      }
-
-      // Send confirmation email if user has email preferences enabled
-      if (userProfile.email && userProfile.emailPreferences?.eventReminders !== false) {
-        const emailData = generateRegistrationConfirmationEmail(
-          event.title,
-          formatDate(event.date),
-          formatTime(event.time),
-          event.venue
-        );
-        emailData.to = userProfile.email;
-
-        try {
-          await sendEmail(emailData);
-        } catch (error) {
-          console.error('Failed to send registration confirmation email:', error);
-          // Don't show error to user, registration is still successful
-        }
-      }
-
-      // Create automatic reminder (1 day before event)
-      try {
-        const reminderTime = getDefaultReminderTime(event.date, event.time);
-        await createReminder(userProfile, event, reminderTime);
-      } catch (error) {
-        console.error('Failed to create reminder:', error);
-        // Don't show error to user, registration is still successful
-      }
-
+    if (error) {
       toast({
-        title: 'Registration Successful!',
-        description: `You are now registered for ${event.title}. A reminder has been set for 1 day before the event.`,
+        variant: 'destructive',
+        title: 'Registration failed',
+        description: error.message,
       });
-      setIsOpen(false);
-    } catch (error: any) {
-       toast({
-            variant: "destructive",
-            title: "Registration Failed",
-            description: error.message || "An error occurred.",
-        });
+      return;
     }
+
+    toast({
+      title: 'Registration successful',
+      description: `You are registered for ${event.title}`,
+    });
+
+    setOpen(false);
   };
 
+  // 🔹 UNREGISTER
   const handleUnregister = async () => {
-    if (!user?.id || !registration) return;
+    if (!registration) return;
 
-    try {
-        // Delete the registration
-        await deleteDocumentNonBlocking('registrations', registration.id);
+    const { error } = await supabase
+      .from('registrations')
+      .delete()
+      .eq('id', registration.id);
 
-        // Optionally decrement legacy counter if present
-        if (typeof (event as any).registrationCount === 'number') {
-          await updateDocumentNonBlocking('events', {
-            registrationCount: ((event as any).registrationCount || 1) - 1
-          }, event.id);
-        }
-
-        toast({
-            title: 'Unregistered Successfully',
-            description: `You are no longer registered for ${event.title}.`,
-        });
-    } catch (error: any) {
-         toast({
-            variant: "destructive",
-            title: "Unregistration Failed",
-            description: error.message || "An error occurred.",
-        });
+    if (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Unregister failed',
+        description: error.message,
+      });
+      return;
     }
-  }
+
+    toast({
+      title: 'Unregistered',
+      description: `You are no longer registered for ${event.title}`,
+    });
+  };
 
   if (isRegistered) {
     return (
-        <AlertDialog>
-            <AlertDialogTrigger asChild>
-                <Button variant="secondary">
-                    <UserCheck className="mr-2" />
-                    You are registered
-                </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-                <AlertDialogHeader>
-                    <AlertDialogTitle>Cancel Registration?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                        You are already registered for "{event.title}". Would you like to cancel your registration?
-                    </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                    <AlertDialogCancel>Keep Registration</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleUnregister}>
-                        <XCircle className="mr-2" />
-                        Cancel Registration
-                    </AlertDialogAction>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button variant="secondary">
+            <UserCheck className="mr-2 h-4 w-4" />
+            You are registered
+          </Button>
+        </AlertDialogTrigger>
+
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel registration?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Do you want to unregister from <strong>{event.title}</strong>?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction onClick={handleUnregister}>
+              <XCircle className="mr-2 h-4 w-4" />
+              Unregister
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     );
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <Button onClick={() => setIsOpen(true)}>
-        <Ticket className="mr-2" />
-        Register for this Event
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button onClick={() => setOpen(true)}>
+        <Ticket className="mr-2 h-4 w-4" />
+        Register
       </Button>
-      <DialogContent className="sm:max-w-[425px]">
+
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle>Register for: {event.title}</DialogTitle>
+          <DialogTitle>Register for {event.title}</DialogTitle>
           <DialogDescription>
-            Confirm your details to complete the registration.
+            Please confirm your details
           </DialogDescription>
         </DialogHeader>
+
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
@@ -229,55 +202,64 @@ export default function EventRegistrationDialog({ event, userProfile, isRegister
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
-              name="rollNumber"
+              name="roll_number"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Roll Number</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., 21BCE0001" {...field} />
+                    <Input {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
             <div className="grid grid-cols-2 gap-4">
-               <FormField
+              <FormField
                 control={form.control}
                 name="branch"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Branch</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., CSE" {...field} />
+                      <Input {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-               <FormField
+
+              <FormField
                 control={form.control}
                 name="section"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Section</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., A1" {...field} />
+                      <Input {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
-             <DialogFooter>
-                <DialogClose asChild>
-                    <Button type="button" variant="secondary">Cancel</Button>
-                </DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
-                    {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Confirm Registration
+
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="secondary">
+                  Cancel
                 </Button>
+              </DialogClose>
+
+              <Button type="submit" disabled={form.formState.isSubmitting}>
+                {form.formState.isSubmitting && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Confirm
+              </Button>
             </DialogFooter>
           </form>
         </Form>

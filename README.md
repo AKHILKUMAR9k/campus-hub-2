@@ -1,96 +1,182 @@
-# Campus Hub – Events Dashboard (Supabase)
+# Supabase CLI (v1)
 
-Next.js (App Router) + TypeScript + Tailwind CSS frontend powered by Supabase (Auth, Postgres, Storage). This project provides an events platform for college clubs with authentication, profiles, events CRUD, registrations, comments, and dashboards.
+[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main)
 
-## Quick start
+[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
-1) Prereqs
-- Node 18+
-- Supabase CLI (optional but recommended)
-- A Supabase project (or use local dev via Supabase CLI)
+This repository contains all the functionality for Supabase CLI.
 
-2) Clone and install
+- [x] Running Supabase locally
+- [x] Managing database migrations
+- [x] Creating and deploying Supabase Functions
+- [x] Generating types directly from your database schema
+- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
+
+## Getting started
+
+### Install the CLI
+
+Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
+
 ```bash
-npm install
+npm i supabase --save-dev
 ```
 
-3) Environment variables
-Create `.env.local` in the project root with:
+To install the beta release channel:
+
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-SENDGRID_API_KEY=your_sendgrid_key_optional
-FROM_EMAIL=noreply@campushub.com
+npm i supabase@beta --save-dev
 ```
 
-4) Database schema and RLS policies
-- SQL files are provided under `supabase/schema.sql` and `supabase/policies.sql`.
-- Apply them in Supabase SQL editor, or with Supabase CLI:
-```bash
-supabase db push --include=./supabase/schema.sql --include=./supabase/policies.sql
+When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
+
+```
+NODE_OPTIONS=--no-experimental-fetch yarn add supabase
 ```
 
-Tables created:
-- `users(id uuid pk, full_name, email, role enum, created_at)`
-- `events(id serial pk, title, description, date timestamptz, venue, club, category, image_url, created_by uuid, is_completed)`
-- `registrations(id serial pk, event_id int, user_id uuid, registered_at)`
-- `comments(id serial pk, event_id int, user_id uuid, content, parent_comment int, likes, created_at)`
-- `resources` (optional)
+> **Note**
+For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
 
-RLS policies in `supabase/policies.sql` enforce:
-- Users can read/insert/update their own user row (`auth.uid() = id`)
-- Anyone can read events; only creators (`created_by = auth.uid()`) can create/update/delete
-- Users can create/delete their own registrations and view their own; organizers can read registrations for their events
-- Comments are public to read; only authors can write/update/delete
+<details>
+  <summary><b>macOS</b></summary>
 
-5) Storage bucket
-- Create a public bucket named `event-images` in Supabase Storage.
-- The app uploads event posters to `event-images/events/<userId>/<timestamp>.ext` and reads via public URLs.
+  Available via [Homebrew](https://brew.sh). To install:
 
-6) Run
+  ```sh
+  brew install supabase/tap/supabase
+  ```
+
+  To install the beta release channel:
+  
+  ```sh
+  brew install supabase/tap/supabase-beta
+  brew link --overwrite supabase-beta
+  ```
+  
+  To upgrade:
+
+  ```sh
+  brew upgrade supabase
+  ```
+</details>
+
+<details>
+  <summary><b>Windows</b></summary>
+
+  Available via [Scoop](https://scoop.sh). To install:
+
+  ```powershell
+  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+  scoop install supabase
+  ```
+
+  To upgrade:
+
+  ```powershell
+  scoop update supabase
+  ```
+</details>
+
+<details>
+  <summary><b>Linux</b></summary>
+
+  Available via [Homebrew](https://brew.sh) and Linux packages.
+
+  #### via Homebrew
+
+  To install:
+
+  ```sh
+  brew install supabase/tap/supabase
+  ```
+
+  To upgrade:
+
+  ```sh
+  brew upgrade supabase
+  ```
+
+  #### via Linux packages
+
+  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
+
+  ```sh
+  sudo apk add --allow-untrusted <...>.apk
+  ```
+
+  ```sh
+  sudo dpkg -i <...>.deb
+  ```
+
+  ```sh
+  sudo rpm -i <...>.rpm
+  ```
+
+  ```sh
+  sudo pacman -U <...>.pkg.tar.zst
+  ```
+</details>
+
+<details>
+  <summary><b>Other Platforms</b></summary>
+
+  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
+
+  ```sh
+  go install github.com/supabase/cli@latest
+  ```
+
+  Add a symlink to the binary in `$PATH` for easier access:
+
+  ```sh
+  ln -s "$(go env GOPATH)/cli" /usr/bin/supabase
+  ```
+
+  This works on other non-standard Linux distros.
+</details>
+
+<details>
+  <summary><b>Community Maintained Packages</b></summary>
+
+  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
+  To install in your working directory:
+
+  ```bash
+  pkgx install supabase
+  ```
+
+  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
+</details>
+
+### Run the CLI
+
 ```bash
-npm run dev
+supabase bootstrap
 ```
-App runs at `http://localhost:9002` (see `package.json`).
 
-## Auth flow (Email + Google)
-- Signup page saves `pendingUserProfile` in `localStorage` with name/role/email.
-- On Auth `SIGNED_IN`, the provider inserts the `users` row with `id = auth.uid()` using pending profile data if present; otherwise falls back to metadata/defaults. Pending data is cleared after insert.
-- Logout is wrapped with toasts and error handling.
+Or using npx:
 
-## Key implementation details
+```bash
+npx supabase bootstrap
+```
 
-- Supabase client lives in `src/supabase/client.ts` and is used across the app.
-- Storage helper `uploadToStorage(file, path)` is in `src/supabase/utils.ts`.
-- Events CRUD uses both legacy (camelCase) and new (snake_case) fields to keep the UI stable while the DB uses the new schema:
-  - New: `created_by`, `image_url`, `is_completed`, `long_description`, `club`
-  - Legacy UI fields still present for rendering
-- Registrations: inserts write `event_id`/`user_id`/`registered_at` (with legacy fields for UI compatibility).
-- Comments: use `comments(event_id, user_id, content, parent_comment, likes)` and render threaded replies via `parent_comment`.
-- Email: API route at `src/app/api/send-email/route.ts` uses SendGrid if `SENDGRID_API_KEY` is provided. In-app toasts are used for confirmations.
+The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
 
-## Pages
-- `/` Login
-- `/signup` Signup
-- `/dashboard` Upcoming events with filters/search/date range
-- `/dashboard/past-events` Past events gallery
-- `/dashboard/my-events` Student dashboard (registrations + calendar summary)
-- `/dashboard/manage-events` Organizer dashboard (manage own events)
-- `/dashboard/events/[id]` Event details (register, add-to-calendar, comments on past events)
-- `/dashboard/events/[id]/edit` Organizer-only event edit
-- `/dashboard/settings` Create/update profile
-- `/dashboard/profile` View profile
+## Docs
 
-## Development notes
-- The codebase still supports some legacy fields from a Firebase migration to minimize UI disruption. New inserts/updates target snake_case columns; readers accept both.
-- If you want to fully drop legacy fields, refactor `src/lib/types.ts` and rendering components to the new schema and remove camelCase usage.
+Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
 
-## Minimal testing suggestions
-- Add React Testing Library tests for auth provider behavior on SIGNED_IN (pending profile insert).
-- Component tests for `EventForm` (validation + storage upload mocked).
-- Integration tests for comments threading logic with mocked Supabase client.
+## Breaking changes
 
-## Troubleshooting
-- 401/permission errors: ensure you are authenticated and that `id` in the `users` insert matches `auth.uid()`.
-- Storage errors: verify `event-images` bucket exists and is public.
-- Google auth: enable Google provider in Supabase Auth and set callback to your site URL.
+We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
+
+However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
+
+## Developing
+
+To run from source:
+
+```sh
+# Go >= 1.22
+go run . help
+```

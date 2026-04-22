@@ -70,3 +70,30 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  .mesh-gradient {
+    background-color: hsla(208, 44%, 93%, 1);
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(208, 45%, 54%, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(233, 23%, 70%, 0.15) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(208, 45%, 54%, 0.1) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(233, 23%, 70%, 0.1) 0px, transparent 50%);
+  }
+  
+  .dark .mesh-gradient {
+    background-color: hsla(222, 84%, 5%, 1);
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(208, 45%, 54%, 0.2) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(233, 23%, 70%, 0.15) 0px, transparent 50%);
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-20px); }
+  }
+}

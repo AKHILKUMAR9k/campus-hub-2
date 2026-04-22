@@ -1,42 +1,48 @@
+// src/app/signup/page.tsx
 'use client';
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useEffect } from "react";
-import { signUpWithEmail, signInWithGoogle } from "@/supabase/auth";
-import { setDocumentNonBlocking } from "@/supabase/non-blocking-updates";
-
-import { Button } from "@/components/ui/button";
+import React, { useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { signUpWithEmail, signOut } from '@/supabase/auth';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { GraduationCap, Loader2 } from "lucide-react";
-import { useAuth } from "@/supabase";
-import { useToast } from "@/hooks/use-toast";
-import { User } from "@/lib/types";
+} from '@/components/ui/select';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { GraduationCap, Loader2 } from 'lucide-react';
+import { useAuth } from '@/supabase/provider';
+import { useToast } from '@/hooks/use-toast';
 
 const signupSchema = z.object({
-  fullName: z.string().min(2, "Full name must be at least 2 characters."),
-  email: z.string().email("Please enter a valid email address."),
-  password: z.string().min(12, "Password must be at least 12 characters for security."),
-  role: z.enum(["student", "club_organizer"], { required_error: "Please select a role." }),
+  fullName: z.string().min(2, 'Full name must be at least 2 characters.'),
+  email: z.string().email('Please enter a valid email address.'),
+  password: z.string().min(6, 'Password must be at least 6 characters.'),
+  role: z.enum(['student', 'club_organizer'], {
+    required_error: 'Please select a role.',
+  }),
 });
 
 type SignupFormValues = z.infer<typeof signupSchema>;
@@ -45,119 +51,125 @@ export default function SignupPage() {
   const { user, isUserLoading } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   const form = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
+    // IMPORTANT: don't supply empty-string for role. leave it absent (undefined).
     defaultValues: {
       fullName: '',
       email: '',
       password: '',
-    }
+      // role intentionally not here
+    } as Partial<SignupFormValues>,
   });
 
   useEffect(() => {
+    // if already logged in, go to dashboard
     if (!isUserLoading && user) {
-      router.push("/dashboard");
+      router.push('/dashboard');
     }
   }, [user, isUserLoading, router]);
-  
+
   const onSubmit = async (data: SignupFormValues) => {
+    setIsSubmitting(true);
     try {
-      const { data: authData, error: authError } = await signUpWithEmail(data.email, data.password, {
-        data: {
+      // Save pending profile to localStorage so provider can create DB row after the user confirms email/signs in
+      try {
+        localStorage.setItem('pendingUserProfile', JSON.stringify({
           full_name: data.fullName,
           role: data.role,
+          email: data.email,
+        }));
+      } catch (e) {
+        console.warn('Could not store pendingUserProfile', e);
+      }
+
+      // sign up using your auth wrapper (uses supabase.client.signUp)
+      const { data: authData, error: authError } = await signUpWithEmail(
+        data.email,
+        data.password,
+        {
+          data: {
+            full_name: data.fullName,
+            role: data.role,
+          },
         }
-      });
+      );
 
       if (authError) {
-        let description = "An unexpected error occurred. Please try again.";
-        if (authError.message.includes('already registered')) {
-          description = "This email address is already in use by another account.";
-        } else if (authError.message.includes('Password should be at least')) {
-          description = "This password has been previously exposed — choose a different password.";
-        } else if (authError.message) {
-          description = authError.message;
-        }
-
         toast({
-          variant: "destructive",
-          title: "Signup Failed",
-          description: description,
+          variant: 'destructive',
+          title: 'Signup Failed',
+          description: authError.message,
         });
         return;
       }
 
-      // Store pending profile in localStorage for creation after SIGNED_IN
-      try {
-        const pending = {
-          full_name: data.fullName,
-          role: data.role,
-          email: data.email,
-        };
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('pendingUserProfile', JSON.stringify(pending));
-        }
-      } catch (e) {
-        // Non-fatal: continue even if localStorage write fails
-        console.warn('Failed to store pendingUserProfile:', e);
-      }
-
-      toast({
-        title: "Account Created!",
-        description: "Check your email to confirm your account. Once confirmed, your profile will be created automatically.",
-      });
-    } catch (error: any) {
-      console.error("Signup Error:", error);
-      toast({
-        variant: "destructive",
-        title: "Signup Failed",
-        description: "An unexpected error occurred. Please try again.",
-      });
-    }
-  };
-
-  const handleGoogleSignUp = async () => {
-    try {
-      const { data, error } = await signInWithGoogle();
-
-      if (error) {
-        if (error.message.includes('not enabled')) {
-          toast({
-            variant: "destructive",
-            title: "Sign-up Failed",
-            description: "Google Sign-In is not enabled for this project. Please contact an administrator.",
-          });
-        } else {
-          toast({
-            variant: "destructive",
-            title: "Google Sign-up Failed",
-            description: error.message || "Could not sign up with Google. Please try again.",
-          });
-        }
+      // Check if we have a session immediately (Email Confirmation Disabled)
+      if (authData?.session) {
+        toast({
+          title: 'Account Created',
+          description: 'Redirecting to dashboard...',
+        });
+        router.push('/dashboard');
         return;
       }
 
-      // User profile will be created by auth state change listener
       toast({
-        title: "Account Created with Google!",
-        description: "Redirecting to your dashboard.",
+        title: 'Account Created',
+        description: 'Check your email for confirmation. After confirming, sign in to continue.',
       });
-    } catch (error: any) {
-      console.error("Google Sign-up Error:", error);
-      toast({
-        variant: "destructive",
-        title: "Google Sign-up Failed",
-        description: "Could not sign up with Google. Please try again.",
-      });
-    }
-  }
 
-  if (isUserLoading || user) {
+      // We don't auto-sign-in — wait for email confirmation
+      form.reset();
+    } catch (err) {
+      console.error('Signup Error:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Signup Failed',
+        description: 'An unexpected error occurred. Please try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (isUserLoading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
         <p className="mt-4">Loading...</p>
+      </div>
+    );
+  }
+
+  if (user) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center p-4 text-center">
+        <Loader2 className="h-8 w-8 animate-spin mb-4" />
+        <p className="text-lg font-medium">Redirecting to Dashboard...</p>
+        <p className="text-sm text-muted-foreground mt-2 max-w-xs">
+          If you are stuck here, your session might be out of sync.
+        </p>
+
+        <div className="flex flex-col gap-3 mt-6">
+          <Button
+            onClick={() => window.location.href = '/dashboard'}
+          >
+            Force Go to Dashboard
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await signOut();
+              window.location.reload();
+            }}
+          >
+            Sign Out & Retry
+          </Button>
+        </div>
       </div>
     );
   }
@@ -171,9 +183,7 @@ export default function SignupPage() {
               <GraduationCap className="h-8 w-8 text-primary" />
               <CardTitle className="text-3xl font-bold font-headline">Campus Hub</CardTitle>
             </div>
-            <CardDescription>
-              Create an account to join the community
-            </CardDescription>
+            <CardDescription>Create an account to join the community</CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
@@ -198,33 +208,35 @@ export default function SignupPage() {
                     <FormItem>
                       <FormLabel>Email</FormLabel>
                       <FormControl>
-                        <Input type="email" placeholder="m@example.com" {...field} />
+                        <Input type="email" placeholder="you@example.com" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="role"
                   render={({ field }) => (
-                     <FormItem>
-                        <FormLabel>I am a...</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl>
-                            <SelectTrigger>
-                                <SelectValue placeholder="Select your role" />
-                            </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                            <SelectItem value="student">Student</SelectItem>
-                            <SelectItem value="club_organizer">Club Organizer</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <FormMessage />
+                    <FormItem>
+                      <FormLabel>I am a...</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value as any}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select your role" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="student">Student</SelectItem>
+                          <SelectItem value="club_organizer">Club Organizer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="password"
@@ -238,18 +250,23 @@ export default function SignupPage() {
                     </FormItem>
                   )}
                 />
-                <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Create Account
-                </Button>
-                <Button variant="outline" type="button" className="w-full" onClick={handleGoogleSignUp}>
-                  Sign up with Google
+
+                <Button type="submit" className="w-full" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Account...
+                    </>
+                  ) : (
+                    'Create Account'
+                  )}
                 </Button>
               </form>
             </Form>
+
             <div className="mt-4 text-center text-sm">
-              Already have an account?{" "}
-              <Link href="/" className="underline">
+              Already have an account?{' '}
+              <Link href="/login" className="underline">
                 Login
               </Link>
             </div>
@@ -259,3 +276,4 @@ export default function SignupPage() {
     </main>
   );
 }
+

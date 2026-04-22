@@ -66,7 +66,7 @@ export default function ProfilePage() {
                 <>
                      <div className="flex items-center gap-4 p-3 bg-muted/50 rounded-lg">
                         <GraduationCap className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm">{userProfile.rollNumber || 'Not set'}</span>
+                        <span className="text-sm">{userProfile.roll_number || userProfile.rollNumber || 'Not set'}</span>
                     </div>
                      <div className="flex items-center gap-4 p-3 bg-muted/50 rounded-lg">
                         <Building className="h-5 w-5 text-muted-foreground" />

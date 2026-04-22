@@ -1,42 +1,57 @@
--- Enable RLS
-alter table public.users enable row level security;
-alter table public.events enable row level security;
-alter table public.registrations enable row level security;
-alter table public.comments enable row level security;
-alter table public.resources enable row level security;
+-- Enable RLS on all tables
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reminders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clubs ENABLE ROW LEVEL SECURITY;
 
--- Users
-create policy "Read own user" on public.users for select using ((select auth.uid()) = id);
-create policy "Insert own user" on public.users for insert with check ((select auth.uid()) = id);
-create policy "Update own user" on public.users for update using ((select auth.uid()) = id);
-create policy "Read basic users when authenticated" on public.users for select using ((select auth.role()) = 'authenticated');
+-- Users policies
+-- Users can read/update their own row
+CREATE POLICY "Users can view own profile" ON users FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON users FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can insert own profile" ON users FOR INSERT WITH CHECK (auth.uid() = id);
 
--- Events
-create policy "Read events" on public.events for select using (true);
-create policy "Insert own events" on public.events for insert with check ((select auth.uid()) = created_by);
-create policy "Update own events" on public.events for update using ((select auth.uid()) = created_by);
-create policy "Delete own events" on public.events for delete using ((select auth.uid()) = created_by);
+-- Events policies
+-- Anyone can read events
+CREATE POLICY "Anyone can view events" ON events FOR SELECT USING (true);
+-- Only creators can create/update/delete events
+CREATE POLICY "Creators can manage own events" ON events FOR ALL USING (auth.uid() = created_by);
 
--- Registrations
-create policy "Read own registrations" on public.registrations for select using ((select auth.uid()) = user_id);
-create policy "Insert own registrations" on public.registrations for insert with check ((select auth.uid()) = user_id);
-create policy "Delete own registrations" on public.registrations for delete using ((select auth.uid()) = user_id);
--- Organizers can view registrations for their events
-create policy "Organizers read event registrations" on public.registrations
-  for select using (exists (
-    select 1 from public.events e where e.id = registrations.event_id and e.created_by = (select auth.uid())
-  ));
+-- Registrations policies
+-- Users can create their own registrations
+CREATE POLICY "Users can create own registrations" ON registrations FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- Users can view their own registrations; organizers can view registrations for their events
+CREATE POLICY "Users can view own registrations" ON registrations FOR SELECT USING (
+  auth.uid() = user_id OR
+  EXISTS (
+    SELECT 1 FROM events WHERE events.id::text = registrations.event_id::text AND events.created_by = auth.uid()
+  )
+);
+-- Users can delete their own registrations
+CREATE POLICY "Users can delete own registrations" ON registrations FOR DELETE USING (auth.uid() = user_id);
 
--- Comments
-create policy "Read comments" on public.comments for select using (true);
-create policy "Insert own comments" on public.comments for insert with check ((select auth.uid()) = user_id);
-create policy "Update own comments" on public.comments for update using ((select auth.uid()) = user_id);
-create policy "Delete own comments" on public.comments for delete using ((select auth.uid()) = user_id);
+-- Comments policies
+-- Anyone can read comments
+CREATE POLICY "Anyone can view comments" ON comments FOR SELECT USING (true);
+-- Only authors can create/update/delete comments
+CREATE POLICY "Authors can manage own comments" ON comments FOR ALL USING (auth.uid() = user_id);
 
--- Resources
-create policy "Read resources" on public.resources for select using (true);
-create policy "Insert resources (auth)" on public.resources for insert with check ((select auth.role()) = 'authenticated');
-create policy "Update own resources" on public.resources for update using ((select auth.uid()) = uploaded_by);
-create policy "Delete own resources" on public.resources for delete using ((select auth.uid()) = uploaded_by);
+-- Reminders policies
+-- Users can only access their own reminders
+CREATE POLICY "Users can manage own reminders" ON reminders FOR ALL USING (auth.uid() = user_id);
 
+-- Notifications policies
+-- Users can only access their own notifications
+CREATE POLICY "Users can manage own notifications" ON notifications FOR ALL USING (auth.uid() = user_id);
 
+-- Clubs policies
+-- Anyone can read approved clubs
+CREATE POLICY "Anyone can view approved clubs" ON clubs FOR SELECT USING (status = 'approved');
+-- Organizers can manage their own clubs
+CREATE POLICY "Organizers can manage own clubs" ON clubs FOR ALL USING (auth.uid() = organizer_id);
+-- Admins can manage all clubs
+CREATE POLICY "Admins can manage all clubs" ON clubs FOR ALL USING (
+  EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.role = 'admin')
+);

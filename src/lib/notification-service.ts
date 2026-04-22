@@ -1,11 +1,14 @@
-import { setDocumentNonBlocking } from '@/supabase/non-blocking-updates';
-import { sendEmail, generateCommentNotificationEmail } from '@/lib/email-service';
-import type { User } from '@/lib/types';
+import type { User } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  generateCommentNotificationEmail,
+  generateRegistrationConfirmationEmail,
+} from "@/lib/email-service";
 
 export interface Notification {
   id?: string;
   userId: string;
-  type: 'reminder' | 'comment' | 'registration' | 'event_update' | 'system';
+  type: "reminder" | "comment" | "registration" | "event_update" | "system";
   title: string;
   message: string;
   eventId?: string;
@@ -18,27 +21,48 @@ export interface Notification {
 /**
  * Create an in-app notification
  */
-export async function createNotification(notification: Omit<Notification, 'id' | 'read' | 'createdAt'>): Promise<void> {
-  const fullNotification: Omit<Notification, 'id'> = {
+export async function createNotification(
+  supabase: SupabaseClient,
+  notification: Omit<Notification, "id" | "read" | "createdAt">,
+): Promise<void> {
+  const fullNotification: Omit<Notification, "id"> = {
     ...notification,
     read: false,
     createdAt: new Date().toISOString(),
   };
 
-  await setDocumentNonBlocking('notifications', fullNotification);
+  const { error } = await supabase.from("notifications").insert(
+    fullNotification,
+  );
+
+  if (error) {
+    console.error("Failed to create notification:", error);
+  }
 }
 
 /**
  * Mark notification as read
  */
-export async function markNotificationAsRead(notificationId: string): Promise<void> {
-  await setDocumentNonBlocking('notifications', { read: true }, notificationId);
+export async function markNotificationAsRead(
+  supabase: SupabaseClient,
+  notificationId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read: true })
+    .eq("id", notificationId);
+
+  if (error) {
+    console.error("Failed to mark notification as read:", error);
+  }
 }
 
 /**
  * Mark all notifications as read for a user
  */
-export async function markAllNotificationsAsRead(userId: string): Promise<void> {
+export async function markAllNotificationsAsRead(
+  userId: string,
+): Promise<void> {
   // This would require a more complex query to update multiple documents
   // For now, we'll handle this in the component
 }
@@ -47,22 +71,30 @@ export async function markAllNotificationsAsRead(userId: string): Promise<void> 
  * Create notification for new comment on event
  */
 export async function notifyEventComment(
+  supabase: SupabaseClient,
   eventId: string,
   eventTitle: string,
   commenterName: string,
-  commentText: string
+  commentText: string,
 ): Promise<void> {
   // Get event organizer - we need to fetch the event data
-  const { supabase } = await import('@/supabase/config');
-  const { data: event } = await supabase.from('events').select('organizerId').eq('id', eventId).single();
+  const { data: event } = await supabase.from("events").select("created_by").eq(
+    "id",
+    eventId,
+  ).single();
 
-  if (!event?.organizerId) return;
+  // Note: 'created_by' is the standard field, checking backwards compatibility
+  const organizerId = event?.created_by || (event as any)?.organizerId;
 
-  await createNotification({
-    userId: event.organizerId,
-    type: 'comment',
-    title: 'New Comment on Your Event',
-    message: `${commenterName} commented on "${eventTitle}": "${commentText.substring(0, 100)}${commentText.length > 100 ? '...' : ''}"`,
+  if (!organizerId) return;
+
+  await createNotification(supabase, {
+    userId: organizerId,
+    type: "comment",
+    title: "New Comment on Your Event",
+    message: `${commenterName} commented on "${eventTitle}": "${
+      commentText.substring(0, 100)
+    }${commentText.length > 100 ? "..." : ""}"`,
     eventId,
     eventTitle,
     actionUrl: `/dashboard/events/${eventId}`,
@@ -73,16 +105,18 @@ export async function notifyEventComment(
  * Create notification for event reminder
  */
 export async function notifyEventReminder(
+  supabase: SupabaseClient,
   userId: string,
   eventId: string,
   eventTitle: string,
-  reminderTime: Date
+  reminderTime: Date,
 ): Promise<void> {
-  await createNotification({
+  await createNotification(supabase, {
     userId,
-    type: 'reminder',
-    title: 'Event Reminder',
-    message: `Reminder: "${eventTitle}" is happening soon (${reminderTime.toLocaleString()})`,
+    type: "reminder",
+    title: "Event Reminder",
+    message:
+      `Reminder: "${eventTitle}" is happening soon (${reminderTime.toLocaleString()})`,
     eventId,
     eventTitle,
     actionUrl: `/dashboard/events/${eventId}`,
@@ -93,46 +127,20 @@ export async function notifyEventReminder(
  * Create notification for successful registration
  */
 export async function notifyRegistrationSuccess(
+  supabase: SupabaseClient,
   userId: string,
   eventId: string,
-  eventTitle: string
+  eventTitle: string,
 ): Promise<void> {
-  await createNotification({
+  await createNotification(supabase, {
     userId,
-    type: 'registration',
-    title: 'Registration Confirmed',
+    type: "registration",
+    title: "Registration Confirmed",
     message: `You have successfully registered for "${eventTitle}"`,
     eventId,
     eventTitle,
     actionUrl: `/dashboard/events/${eventId}`,
   });
-}
-
-/**
- * Send email notification for comment (if enabled)
- */
-export async function sendCommentEmailNotification(
-  organizer: User,
-  commenterName: string,
-  commentText: string,
-  eventTitle: string
-): Promise<void> {
-  if (!organizer.email || organizer.emailPreferences?.commentReplies === false) {
-    return;
-  }
-
-  const emailData = generateCommentNotificationEmail(
-    eventTitle,
-    commenterName,
-    commentText
-  );
-  emailData.to = organizer.email;
-
-  try {
-    await sendEmail(emailData);
-  } catch (error) {
-    console.error('Failed to send comment notification email:', error);
-  }
 }
 
 /**

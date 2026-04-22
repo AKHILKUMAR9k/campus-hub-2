@@ -1,9 +1,4 @@
-export * from './config';
-export * from './provider';
-export * from './client-provider';
-export * from './auth';
-export * from './firestore/use-collection';
-export * from './firestore/use-doc';
-export type { WithId } from './firestore/use-collection';
-export * from './non-blocking-updates';
-export * from './errors';
+export { supabase } from './client';
+export { SupabaseProvider, useAuth } from './provider';
+export { useCollection } from './firestore/use-collection';
+export { useDoc } from './firestore/use-doc';

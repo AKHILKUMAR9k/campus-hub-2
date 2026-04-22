@@ -1,28 +1,28 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
-import { useCollection } from '@/supabase';
-import type { Registration } from '@/lib/types';
+import { supabase } from '@/supabase/client';
+import { useAuth } from '@/supabase';
 import { Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import Link from 'next/link';
 
-const locales = {
-  'en-US': enUS,
+/* -------------------- TYPES -------------------- */
+
+type CalendarRegistration = {
+  id: string;
+  event_id: string;
+  title: string;
+  date: string;
+  clubName?: string;
+  venue?: string;
+  time?: string;
 };
-
-const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek,
-  getDay,
-  locales,
-});
 
 interface CalendarEvent {
   id: string;
@@ -37,46 +37,110 @@ interface CalendarEvent {
   };
 }
 
+/* -------------------- CALENDAR SETUP -------------------- */
+
+const locales = { 'en-US': enUS };
+
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek,
+  getDay,
+  locales,
+});
+
+/* -------------------- COMPONENT -------------------- */
+
 export default function CalendarView() {
+  const { user, isUserLoading } = useAuth();
+
+  const [registrations, setRegistrations] = useState<CalendarRegistration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
 
-  const { data: registrations, isLoading, error } = useCollection<Registration>('registrations');
+  /* -------- LOAD REGISTRATIONS -------- */
 
-  const calendarEvents = useMemo(() => {
-    if (!registrations) return [];
+  useEffect(() => {
+    if (!user) return;
 
-    return registrations.map(registration => ({
-      id: registration.id,
-      title: registration.title || 'Event',
-      start: new Date(registration.date || ''),
-      end: new Date(registration.date || ''),
-      resource: {
-        eventId: registration.eventId,
-        clubName: registration.clubName || 'Unknown Club',
-        venue: registration.venue || 'TBD',
-        time: registration.time || 'TBD',
-      },
-    }));
+    const loadRegistrations = async () => {
+      setLoading(true);
+
+      // Join with events table to get details
+      const { data, error } = await supabase
+        .from('registrations')
+        .select(`
+          id, 
+          event_id, 
+          title, 
+          date, 
+          events!registrations_event_id_fkey (
+            club,
+            venue
+          )
+        `)
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error("Calendar load error:", error);
+        setError(error.message);
+        setRegistrations([]);
+      } else {
+        setRegistrations(
+          (data ?? []).map((r: any) => ({
+            id: String(r.id),
+            event_id: r.event_id,
+            title: r.title,
+            date: r.date,
+            // Access nested data from the join
+            clubName: r.events?.club || 'Unknown Club',
+            venue: r.events?.venue || 'TBD',
+            time: format(new Date(r.date), 'p'), // Format time from the date timestamp
+          }))
+        );
+      }
+
+      setLoading(false);
+    };
+
+    loadRegistrations();
+  }, [user]);
+
+  /* -------- MAP TO CALENDAR EVENTS -------- */
+
+  const calendarEvents: CalendarEvent[] = useMemo(() => {
+    return registrations
+      .filter((r) => !!r.date)
+      .map((r) => {
+        const d = new Date(r.date);
+
+        return {
+          id: r.id,
+          title: r.title || 'Event',
+          start: d,
+          end: d,
+          resource: {
+            eventId: r.event_id,
+            clubName: r.clubName ?? 'Unknown Club',
+            venue: r.venue ?? 'TBD',
+            time: r.time ?? 'TBD',
+          },
+        };
+      });
   }, [registrations]);
 
-  const handleSelectEvent = (event: CalendarEvent) => {
-    setSelectedEvent(event);
-  };
+  const upcomingEvents = calendarEvents
+    .filter((e: CalendarEvent) => e.start >= new Date())
+    .sort(
+      (a: CalendarEvent, b: CalendarEvent) =>
+        a.start.getTime() - b.start.getTime()
+    )
+    .slice(0, 5);
 
-  const eventStyleGetter = (event: CalendarEvent) => {
-    return {
-      style: {
-        backgroundColor: '#3b82f6',
-        borderRadius: '4px',
-        opacity: 0.8,
-        color: 'white',
-        border: '0px',
-        display: 'block',
-      },
-    };
-  };
+  /* -------------------- UI -------------------- */
 
-  if (isLoading) {
+  if (isUserLoading || loading) {
     return (
       <div className="flex justify-center items-center h-96">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -88,18 +152,19 @@ export default function CalendarView() {
     return (
       <Alert variant="destructive">
         <AlertTitle>Error loading calendar</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
+        <AlertDescription>{error}</AlertDescription>
       </Alert>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight font-headline">My Calendar</h1>
-      </div>
+      <h1 className="text-2xl font-bold tracking-tight font-headline">
+        My Calendar
+      </h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Calendar */}
         <div className="lg:col-span-2">
           <div className="bg-card rounded-lg border p-4">
             <Calendar
@@ -108,34 +173,47 @@ export default function CalendarView() {
               startAccessor="start"
               endAccessor="end"
               style={{ height: 600 }}
-              onSelectEvent={handleSelectEvent}
-              eventPropGetter={eventStyleGetter}
               views={['month', 'week', 'day']}
               defaultView="month"
               popup
               selectable
+              onSelectEvent={(event: CalendarEvent) =>
+                setSelectedEvent(event)
+              }
             />
           </div>
         </div>
 
+        {/* Sidebar */}
         <div className="space-y-4">
+          {/* Selected Event */}
           <div className="bg-card rounded-lg border p-4">
             <h3 className="font-semibold mb-4">Event Details</h3>
+
             {selectedEvent ? (
               <div className="space-y-2">
                 <h4 className="font-medium">{selectedEvent.title}</h4>
+
                 <p className="text-sm text-muted-foreground">
-                  <strong>Club:</strong> {selectedEvent.resource.clubName}
+                  <strong>Club:</strong>{' '}
+                  {selectedEvent.resource.clubName}
                 </p>
+
                 <p className="text-sm text-muted-foreground">
-                  <strong>Date:</strong> {format(selectedEvent.start, 'PPP')}
+                  <strong>Date:</strong>{' '}
+                  {format(selectedEvent.start, 'PPP')}
                 </p>
+
                 <p className="text-sm text-muted-foreground">
-                  <strong>Time:</strong> {selectedEvent.resource.time}
+                  <strong>Time:</strong>{' '}
+                  {selectedEvent.resource.time}
                 </p>
+
                 <p className="text-sm text-muted-foreground">
-                  <strong>Venue:</strong> {selectedEvent.resource.venue}
+                  <strong>Venue:</strong>{' '}
+                  {selectedEvent.resource.venue}
                 </p>
+
                 <Link
                   href={`/dashboard/events/${selectedEvent.resource.eventId}`}
                   className="inline-block mt-2 text-sm text-primary hover:underline"
@@ -150,29 +228,31 @@ export default function CalendarView() {
             )}
           </div>
 
+          {/* Upcoming */}
           <div className="bg-card rounded-lg border p-4">
             <h3 className="font-semibold mb-4">Upcoming Events</h3>
-            <div className="space-y-2">
-              {calendarEvents
-                .filter(event => event.start >= new Date())
-                .sort((a, b) => a.start.getTime() - b.start.getTime())
-                .slice(0, 5)
-                .map(event => (
+
+            {upcomingEvents.length > 0 ? (
+              <div className="space-y-2">
+                {upcomingEvents.map((e: CalendarEvent) => (
                   <div
-                    key={event.id}
+                    key={e.id}
                     className="p-2 rounded border cursor-pointer hover:bg-muted"
-                    onClick={() => setSelectedEvent(event)}
+                    onClick={() => setSelectedEvent(e)}
                   >
-                    <p className="font-medium text-sm">{event.title}</p>
+                    <p className="font-medium text-sm">{e.title}</p>
                     <p className="text-xs text-muted-foreground">
-                      {format(event.start, 'MMM d, yyyy')} at {event.resource.time}
+                      {format(e.start, 'MMM d, yyyy')} at{' '}
+                      {e.resource.time}
                     </p>
                   </div>
                 ))}
-              {calendarEvents.filter(event => event.start >= new Date()).length === 0 && (
-                <p className="text-sm text-muted-foreground">No upcoming events</p>
-              )}
-            </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No upcoming events
+              </p>
+            )}
           </div>
         </div>
       </div>

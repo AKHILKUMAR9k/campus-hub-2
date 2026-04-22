@@ -77,7 +77,7 @@ export function useCollection<T = any>(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [table, JSON.stringify(options)]);
+  }, [table, options?.filters, options?.orderBy, options?.query]);
 
   return { data, isLoading, error };
 }

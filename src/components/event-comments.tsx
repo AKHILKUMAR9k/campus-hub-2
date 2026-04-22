@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useCollection, useDoc } from '@/supabase';
 import { useAuth } from '@/supabase';
+import { supabase } from '@/supabase/client';
 import type { User } from '@/lib/types';
 import { addDocumentNonBlocking, updateDocumentNonBlocking } from '@/supabase/non-blocking-updates';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
@@ -42,7 +43,7 @@ function ReplyItem({ reply }: { reply: any }) {
   );
 }
 
-function CommentItem({ comment, onReply, onLike }: { comment: any; onReply: (parentId: number, text: string) => Promise<void>; onLike: (commentId: number, currentLikes: number) => Promise<void> }): JSX.Element {
+function CommentItem({ comment, onReply, onLike }: { comment: any; onReply: (parentId: string, text: string) => Promise<void>; onLike: (commentId: string, currentLikes: number) => Promise<void> }): JSX.Element {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [isSubmittingReply, setIsSubmittingReply] = useState(false);
@@ -76,7 +77,7 @@ function CommentItem({ comment, onReply, onLike }: { comment: any; onReply: (par
           <div className="flex items-center gap-4 mt-2">
             <Button variant="ghost" size="sm" className="flex items-center gap-1 text-muted-foreground" onClick={() => onLike(comment.id, comment.likes || 0)}>
               <ThumbsUp className="h-4 w-4" />
-              <span>{comment.likes || 0}</span>
+              <span>{(comment.liked_by || []).length}</span>
             </Button>
             <Button variant="ghost" size="sm" className="flex items-center gap-1 text-muted-foreground" onClick={() => setShowReplyForm(!showReplyForm)}>
               <ReplyIcon className="h-4 w-4" />
@@ -124,13 +125,13 @@ export default function EventComments({ eventId, eventTitle }: EventCommentsProp
   const { data: userProfile } = useDoc<User>('users', user?.id);
 
   const { data: allComments, isLoading, error } = useCollection<any>('comments', {
-    filters: { event_id: eventId as any },
+    filters: { event_id: eventId },
     orderBy: { column: 'created_at', ascending: false }
   });
 
   const topLevel = useMemo(() => (allComments || []).filter(c => !c.parent_comment), [allComments]);
   const repliesByParent = useMemo(() => {
-    const map = new Map<number, any[]>();
+    const map = new Map<string, any[]>();
     (allComments || []).forEach(c => {
       if (c.parent_comment) {
         const list = map.get(c.parent_comment) || [];
@@ -147,13 +148,21 @@ export default function EventComments({ eventId, eventTitle }: EventCommentsProp
     const displayName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}` : 'User';
     try {
       await addDocumentNonBlocking('comments', {
-        event_id: eventId as any,
+        event_id: eventId,
         user_id: user.id,
         content: newComment,
         parent_comment: null,
-        likes: 0,
+        liked_by: [],
+        disliked_by: [],
         user_display_name: displayName,
       });
+
+      // Create notification for event organizer
+      const { notifyEventComment } = await import('@/lib/notification-service');
+      await notifyEventComment(supabase, eventId, eventTitle, displayName, newComment);
+
+      // Send email notification if enabled (Currently handled server-side or requires specific implementation)
+
       setNewComment('');
     } catch (e) {
       console.error('Failed to post comment', e);
@@ -162,21 +171,50 @@ export default function EventComments({ eventId, eventTitle }: EventCommentsProp
     }
   };
 
-  const handleReply = async (parentId: number, text: string) => {
+  const handleReply = async (parentId: string, text: string) => {
     if (!user) return;
     const displayName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}` : 'User';
     await addDocumentNonBlocking('comments', {
-      event_id: eventId as any,
+      event_id: eventId,
       user_id: user.id,
       content: text,
       parent_comment: parentId,
-      likes: 0,
+      liked_by: [],
+      disliked_by: [],
       user_display_name: displayName,
     });
   };
 
-  const handleLike = async (commentId: number, currentLikes: number) => {
-    await updateDocumentNonBlocking('comments', { likes: (currentLikes || 0) + 1 }, String(commentId));
+  const handleLike = async (commentId: string, currentLikes: number) => {
+    if (!user) return;
+
+    // Get current comment data to check if user already liked it
+    const { data: comment } = await supabase
+      .from('comments')
+      .select('liked_by, disliked_by')
+      .eq('id', commentId)
+      .single();
+
+    if (!comment) return;
+
+    const userId = user.id;
+    const hasLiked = comment.liked_by?.includes(userId);
+    const hasDisliked = comment.disliked_by?.includes(userId);
+
+    let updateData: any = {};
+
+    if (hasLiked) {
+      // Remove like
+      updateData.liked_by = comment.liked_by.filter((id: string) => id !== userId);
+    } else {
+      // Add like and remove dislike if exists
+      updateData.liked_by = [...(comment.liked_by || []), userId];
+      if (hasDisliked) {
+        updateData.disliked_by = comment.disliked_by.filter((id: string) => id !== userId);
+      }
+    }
+
+    await updateDocumentNonBlocking('comments', updateData, commentId);
   };
 
   return (

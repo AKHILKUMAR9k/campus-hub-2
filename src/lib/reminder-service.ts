@@ -48,7 +48,7 @@ export async function createReminder(
     const emailData = generateReminderEmail(
       event.title,
       formatDate(event.date),
-      formatTime(event.time),
+      formatTime(event.time || ''),
       reminderTime
     );
     emailData.to = user.email;
@@ -79,8 +79,8 @@ export async function markReminderAsSent(reminderId: string): Promise<void> {
 /**
  * Calculate default reminder time (1 day before event)
  */
-export function getDefaultReminderTime(eventDate: string, eventTime: string): Date {
-  const eventDateTime = new Date(`${eventDate.split('T')[0]}T${eventTime}`);
+export function getDefaultReminderTime(eventDate: string, eventTime?: string): Date {
+  const eventDateTime = new Date(`${eventDate.split('T')[0]}T${eventTime || '00:00'}`);
   const reminderTime = new Date(eventDateTime.getTime() - 24 * 60 * 60 * 1000); // 1 day before
   return reminderTime;
 }
@@ -88,8 +88,8 @@ export function getDefaultReminderTime(eventDate: string, eventTime: string): Da
 /**
  * Calculate reminder time options
  */
-export function getReminderTimeOptions(eventDate: string, eventTime: string): Array<{ label: string; value: Date }> {
-  const eventDateTime = new Date(`${eventDate.split('T')[0]}T${eventTime}`);
+export function getReminderTimeOptions(eventDate: string, eventTime?: string): Array<{ label: string; value: Date }> {
+  const eventDateTime = new Date(`${eventDate.split('T')[0]}T${eventTime || '00:00'}`);
 
   return [
     {

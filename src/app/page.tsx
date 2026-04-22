@@ -1,220 +1,169 @@
-'use client';
-
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useEffect } from "react";
-import { signInWithEmail, signInWithGoogle } from "@/supabase/auth";
-
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { GraduationCap, Loader2 } from "lucide-react";
-import { useAuth } from "@/supabase";
-import { useToast } from "@/hooks/use-toast";
-import { setDocumentNonBlocking } from "@/supabase/non-blocking-updates";
-import { User } from "@/lib/types";
+import { GraduationCap, Calendar, Users, Trophy, ArrowRight, Sparkles, Rocket, ShieldCheck } from "lucide-react";
 
-
-const loginSchema = z.object({
-  email: z.string().email("Please enter a valid email address."),
-  password: z.string().min(6, "Password must be at least 6 characters."),
-});
-
-type LoginFormValues = z.infer<typeof loginSchema>;
-
-export default function LoginPage() {
-  const { user, isUserLoading } = useAuth();
-  const router = useRouter();
-  const { toast } = useToast();
-
-  const form = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: '',
-      password: '',
-    }
-  });
-
-  useEffect(() => {
-    if (!isUserLoading && user) {
-      router.push("/dashboard");
-    }
-  }, [user, isUserLoading, router]);
-
-
-  const onSubmit = async (data: LoginFormValues) => {
-    try {
-      const { data: authData, error } = await signInWithEmail(data.email, data.password);
-
-      if (error) {
-        let description = "An unexpected error occurred. Please try again.";
-        if (error.message.includes('Invalid login credentials')) {
-          description = "Invalid email or password. Please check your credentials and try again.";
-        } else if (error.message) {
-          description = error.message;
-        }
-
-        toast({
-          variant: "destructive",
-          title: "Login Failed",
-          description: description,
-        });
-        return;
-      }
-
-      if (authData.user) {
-        toast({
-          title: "Logged In!",
-          description: "Redirecting to your dashboard.",
-        });
-      }
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      toast({
-        variant: "destructive",
-        title: "Login Failed",
-        description: "An unexpected error occurred. Please try again.",
-      });
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    try {
-      const { data, error } = await signInWithGoogle();
-
-      if (error) {
-        if (error.message.includes('not enabled')) {
-          toast({
-            variant: "destructive",
-            title: "Login Failed",
-            description: "Google Sign-In is not enabled for this project. Please contact an administrator.",
-          });
-        } else {
-          toast({
-            variant: "destructive",
-            title: "Google Sign-in Failed",
-            description: error.message || "Could not sign in with Google. Please try again.",
-          });
-        }
-        return;
-      }
-
-      // User profile will be created by auth state change listener
-      toast({
-        title: "Logged In with Google!",
-        description: "Redirecting to your dashboard.",
-      });
-    } catch (error: any) {
-      console.error("Google Sign-in Error:", error);
-      toast({
-        variant: "destructive",
-        title: "Google Sign-in Failed",
-        description: "Could not sign in with Google. Please try again.",
-      });
-    }
-  }
-
-  if (isUserLoading) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-        <p className="mt-4">Loading...</p>
-      </div>
-    );
-  }
-
-  if (user) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-        <p className="mt-4">Redirecting...</p>
-      </div>
-    );
-  }
-
+export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md">
-        <Card className="shadow-2xl">
-          <CardHeader className="space-y-1 text-center">
-            <div className="flex justify-center items-center gap-2">
-              <GraduationCap className="h-8 w-8 text-primary" />
-              <CardTitle className="text-3xl font-bold font-headline">Campus Hub</CardTitle>
+    <div className="flex min-h-screen flex-col mesh-gradient">
+      {/* Header */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/60 backdrop-blur-xl">
+        <div className="container flex h-16 items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-primary/10 rounded-lg">
+              <GraduationCap className="h-6 w-6 text-primary" />
             </div>
-            <CardDescription>
-              Sign in to your account to access events
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="email"
-                          placeholder="m@example.com"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center">
-                        <Label htmlFor="password">Password</Label>
-                        <Link
-                          href="#"
-                          className="ml-auto inline-block text-sm underline"
-                        >
-                          Forgot your password?
-                        </Link>
-                      </div>
-                      <FormControl>
-                        <Input id="password" type="password" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Login
-                </Button>
-                <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} type="button">
-                  Login with Google
-                </Button>
-              </form>
-            </Form>
-            <div className="mt-4 text-center text-sm">
-              Don&apos;t have an account?{" "}
-              <Link href="/signup" className="underline">
-                Sign up
-              </Link>
+            <span className="font-bold text-xl font-headline tracking-tight">Campus Hub</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link href="/login" className="text-sm font-medium transition-colors hover:text-primary">
+              Login
+            </Link>
+            <Button asChild className="rounded-full px-6">
+              <Link href="/signup">Get Started</Link>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1">
+        {/* Hero Section */}
+        <section className="relative overflow-hidden pt-20 pb-32 md:pt-32 md:pb-48">
+          <div className="container relative z-10 flex flex-col items-center text-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold mb-6 animate-pulse">
+              <Sparkles className="h-3 w-3" />
+              <span>The Next Generation of Campus Life</span>
             </div>
-          </CardContent>
-        </Card>
+            <h1 className="font-heading text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter text-foreground mb-6 bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/70">
+              Unite Your <br className="hidden sm:inline" />
+              <span className="text-primary italic font-headline">Campus Experience</span>
+            </h1>
+            <p className="max-w-[42rem] leading-relaxed text-muted-foreground sm:text-xl mb-10">
+              A premium platform for students and organizers. Discover events, 
+              join elite clubs, and manage your campus activity with ease.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 mb-16">
+              <Button asChild size="lg" className="h-12 px-8 rounded-full shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all">
+                <Link href="/signup">
+                  Join the Hub <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="h-12 px-8 rounded-full backdrop-blur-sm">
+                <Link href="/login">Organizer Dashboard</Link>
+              </Button>
+            </div>
+
+            {/* Mockup Display */}
+            <div className="relative w-full max-w-5xl mx-auto mt-8 animate-float">
+                <div className="absolute -inset-1 bg-gradient-to-r from-primary to-accent rounded-2xl blur opacity-25 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
+                <div className="relative bg-card rounded-xl border shadow-2xl overflow-hidden aspect-[16/10] md:aspect-[16/9]">
+                    <Image 
+                        src="/images/mockup.png" 
+                        alt="Campus Hub Dashboard" 
+                        fill
+                        className="object-cover"
+                        priority
+                    />
+                </div>
+            </div>
+          </div>
+          
+          {/* Decorative Background Elements */}
+          <div className="absolute top-1/4 -left-64 w-96 h-96 bg-primary/20 rounded-full blur-3xl opacity-30 animate-pulse"></div>
+          <div className="absolute bottom-1/4 -right-64 w-96 h-96 bg-accent/20 rounded-full blur-3xl opacity-30 animate-pulse"></div>
+        </section>
+
+        {/* Features Section */}
+        <section className="py-24 relative overflow-hidden">
+          <div className="container relative z-10">
+            <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-16">
+              <h2 className="font-heading text-3xl md:text-5xl font-bold tracking-tight">
+                Designed for Excellence
+              </h2>
+              <p className="max-w-[85%] text-muted-foreground sm:text-lg">
+                Experience a suite of tools built specifically for the high-energy campus environment.
+              </p>
+            </div>
+            
+            <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+              <FeatureCard 
+                icon={<Calendar className="h-8 w-8 text-primary" />}
+                title="Smart Calendar"
+                description="Intelligent event tracking with seamless Google Calendar and iCal synchronization."
+              />
+              <FeatureCard 
+                icon={<Users className="h-8 w-8 text-primary" />}
+                title="Elite Clubs"
+                description="Connect with top-tier student organizations and build your campus network."
+              />
+              <FeatureCard 
+                icon={<Rocket className="h-8 w-8 text-primary" />}
+                title="AI Discovery"
+                description="Discover events tailored to your interests using our advanced tagging and matching system."
+              />
+              <FeatureCard 
+                icon={<Trophy className="h-8 w-8 text-primary" />}
+                title="Live Analytics"
+                description="Real-time registration tracking and engagement metrics for club organizers."
+              />
+               <FeatureCard 
+                icon={<ShieldCheck className="h-8 w-8 text-primary" />}
+                title="Admin Verified"
+                description="Every club and event is verified by campus administrators for safety and quality."
+              />
+               <FeatureCard 
+                icon={<Sparkles className="h-8 w-8 text-primary" />}
+                title="Social Sharing"
+                description="One-tap sharing to WhatsApp and Instagram to boost your event's reach."
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Call to Action */}
+        <section className="py-24 border-t bg-primary/5">
+          <div className="container flex flex-col items-center text-center gap-6">
+            <h2 className="text-3xl md:text-5xl font-bold tracking-tight">Ready to transform your campus life?</h2>
+            <p className="text-muted-foreground text-lg max-w-2xl">
+              Join thousands of students and organizers who are already using Campus Hub 
+              to make every college moment count.
+            </p>
+            <Button asChild size="lg" className="rounded-full px-10 h-14 text-lg">
+              <Link href="/signup">Get Started for Free</Link>
+            </Button>
+          </div>
+        </section>
+      </main>
+
+      <footer className="py-12 border-t backdrop-blur-sm">
+        <div className="container flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-2">
+            <GraduationCap className="h-5 w-5 text-primary" />
+            <span className="font-bold font-headline">Campus Hub</span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            &copy; {new Date().getFullYear()} Campus Hub. Built with excellence for students.
+          </p>
+          <div className="flex gap-6">
+            <Link href="#" className="text-sm text-muted-foreground hover:text-primary">Terms</Link>
+            <Link href="#" className="text-sm text-muted-foreground hover:text-primary">Privacy</Link>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, description }: { icon: React.ReactNode, title: string, description: string }) {
+  return (
+    <div className="group relative p-8 rounded-2xl border bg-card/50 backdrop-blur-sm hover:shadow-xl hover:shadow-primary/5 transition-all hover:-translate-y-1">
+      <div className="mb-4 p-3 rounded-xl bg-primary/5 w-fit group-hover:bg-primary/10 transition-colors">
+        {icon}
       </div>
-    </main>
+      <h3 className="font-bold text-xl mb-2">{title}</h3>
+      <p className="text-muted-foreground leading-relaxed">
+        {description}
+      </p>
+    </div>
   );
 }

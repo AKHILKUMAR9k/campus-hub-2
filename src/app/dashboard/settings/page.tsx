@@ -37,7 +37,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const profileFormSchema = z.object({
   firstName: z.string().min(1, 'First name is required'),
   lastName: z.string().min(1, 'Last name is required'),
-  role: z.enum(["student", "club_organizer"], { required_error: "Please select a role." }),
+  role: z.enum(["student", "club_organizer", "admin"], { required_error: "Please select a role." }),
   rollNumber: z.string().optional(),
   branch: z.string().optional(),
   section: z.string().optional(),
@@ -82,10 +82,10 @@ export default function SettingsPage() {
   useEffect(() => {
     if (userProfile) {
         profileForm.reset({
-            firstName: userProfile.first_name,
-            lastName: userProfile.last_name,
-            role: userProfile.role,
-            rollNumber: userProfile.rollNumber || '',
+            firstName: userProfile.first_name || '',
+            lastName: userProfile.last_name || '',
+            role: userProfile.role || 'student',
+            rollNumber: userProfile.roll_number || userProfile.rollNumber || '',
             branch: userProfile.branch || '',
             section: userProfile.section || '',
         });

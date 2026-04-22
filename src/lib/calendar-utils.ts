@@ -79,7 +79,27 @@ export function createCalendarEvent(event: {
   time?: string;
   duration?: number; // in hours
 }): CalendarEvent {
-  const startDate = new Date(`${event.date}T${event.time || '00:00'}`);
+  // Normalize date string (remove time if it's already there)
+  const dateOnly = event.date ? event.date.split('T')[0] : new Date().toISOString().split('T')[0];
+  // Normalize time string (HH:mm)
+  const timeOnly = event.time ? event.time.substring(0, 5) : '09:00';
+  
+  const startDate = new Date(`${dateOnly}T${timeOnly}:00`);
+  
+  // Validate the resulting date
+  if (isNaN(startDate.getTime())) {
+    console.warn('Invalid date detected in createCalendarEvent:', event.date, event.time);
+    // Fallback to current date or a safe default
+    const now = new Date();
+    return {
+      title: event.title,
+      description: event.description || '',
+      location: event.venue || '',
+      startDate: now,
+      endDate: new Date(now.getTime() + (event.duration || 2) * 60 * 60 * 1000),
+    };
+  }
+
   const endDate = new Date(startDate.getTime() + (event.duration || 2) * 60 * 60 * 1000); // Default 2 hours
 
   return {

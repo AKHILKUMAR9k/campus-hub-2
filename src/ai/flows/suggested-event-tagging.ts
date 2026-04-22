@@ -31,7 +31,7 @@ export async function suggestEventTags(input: SuggestEventTagsInput): Promise<Su
 
 const prompt = ai.definePrompt({
   name: 'suggestEventTagsPrompt',
-  model: 'gemini-pro',
+  model: 'googleai/gemini-1.5-flash',
   input: {schema: SuggestEventTagsInputSchema},
   output: {schema: SuggestEventTagsOutputSchema},
   prompt: `You are an event tag suggestion expert. Given an event description, you will suggest relevant tags for the event.

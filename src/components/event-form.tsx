@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -28,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { CalendarIcon, Loader2, Sparkles, X, CheckCircle, Upload } from 'lucide-react';
+import { CalendarIcon, Loader2, Sparkles, X, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Calendar } from '@/components/ui/calendar';
 import { format } from 'date-fns';
@@ -36,228 +35,229 @@ import { getSuggestedTags } from '@/app/actions';
 import { Badge } from './ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { useCollection, useDoc } from '@/supabase';
-import { addDocumentNonBlocking, updateDocumentNonBlocking } from '@/supabase/non-blocking-updates';
-import { useAuth } from '@/supabase';
-import type { Club, User, Event } from '@/lib/types';
-import { uploadToStorage } from '@/supabase/utils';
 
+import { useDoc } from '@/supabase';
+import { useAuth } from '@/supabase';
+import { supabase } from '@/supabase/client';
+import type { User, Event } from '@/lib/types';
+import { uploadToStorage } from '@/supabase/utils';
 
 const categories = ['Tech', 'Music', 'Sports', 'Art', 'Cultural', 'Career'];
 
 const eventFormSchema = z.object({
-  title: z.string().min(3, 'Title must be at least 3 characters.'),
-  description: z.string().min(10, 'Description must be at least 10 characters.'),
+  title: z.string().min(3),
+  description: z.string().min(10),
   longDescription: z.string().optional(),
-  date: z.date({
-    required_error: 'A date for the event is required.',
-  }),
-  time: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format (HH:MM)'),
-  venue: z.string().min(3, 'Venue is required.'),
-  category: z.string({ required_error: 'Please select a category.' }),
+  date: z.instanceof(Date),
+  time: z.string(),
+  venue: z.string(),
+  category: z.string(),
   tags: z.array(z.string()).optional(),
   image: z.string().optional(),
-  clubName: z.string().min(2, 'Club name is required.'),
+  clubName: z.string().min(2),
 });
 
 type EventFormValues = z.infer<typeof eventFormSchema>;
 
-interface EventFormProps {
-    existingEvent?: Event | null;
-}
-
-export default function EventForm({ existingEvent }: EventFormProps) {
+export default function EventForm({ existingEvent }: { existingEvent?: Event }) {
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
-  const [isSuggesting, startSuggestionTransition] = useTransition();
-  const { toast } = useToast();
-  const { user, isUserLoading: isAuthLoading } = useAuth();
-  const router = useRouter();
+  const [isSuggesting, startSuggest] = useTransition();
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data: userProfile, isLoading: isUserLoading } = useDoc<User>('users', user?.id);
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const router = useRouter();
+  const { data: userProfile } = useDoc<User>('users', user?.id);
 
-  const isOrganizer = userProfile?.role === 'club_organizer';
+  const isOrganizer =
+    userProfile?.role === 'club_organizer' ||
+    userProfile?.role === 'admin';
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(eventFormSchema),
-    defaultValues: existingEvent ? {
-        ...existingEvent,
-        clubName: existingEvent.clubName || '',
-        longDescription: existingEvent.longDescription || '',
-        tags: existingEvent.tags || [],
-        image: existingEvent.image || '',
-        date: new Date(existingEvent.date),
-    } : {
-      title: '',
-      description: '',
-      longDescription: '',
-      date: undefined,
-      time: '10:00',
-      venue: '',
-      category: undefined,
-      tags: [],
-      image: '',
-      clubName: '',
+    defaultValues: {
+      title: existingEvent?.title || '',
+      description: existingEvent?.description || '',
+      longDescription: existingEvent?.longDescription || '',
+      date: existingEvent ? new Date(existingEvent.date) : undefined,
+      time: existingEvent?.time || '10:00',
+      venue: existingEvent?.venue || '',
+      category: existingEvent?.category || '',
+      tags: existingEvent?.tags || [],
+      image: existingEvent?.image || existingEvent?.image_url || '',
+      clubName: existingEvent?.clubName || existingEvent?.club || '',
     },
   });
-  
-  useEffect(() => {
-    if(existingEvent) {
-        form.reset({
-            ...existingEvent,
-            clubName: existingEvent.clubName || '',
-            longDescription: existingEvent.longDescription || '',
-            tags: existingEvent.tags || [],
-            image: existingEvent.image || '',
-            date: new Date(existingEvent.date),
-        });
-        if (existingEvent.image) {
-          const isDataUri = existingEvent.image.startsWith('data:image');
-          setImagePreview(isDataUri ? existingEvent.image : null);
-        }
+
+  const descriptionValue = useWatch({
+    control: form.control,
+    name: 'description',
+  });
+
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      form.setValue('image', dataUrl);
+      setImagePreview(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function onSubmit(values: EventFormValues) {
+    if (!user) {
+      toast({ variant: 'destructive', title: 'Not authenticated!' });
+      return;
     }
-  }, [existingEvent, form]);
 
+    setIsSubmitting(true);
 
-  const descriptionValue = useWatch({ control: form.control, name: 'description' });
+    try {
+      /** 1️⃣ Upload poster if needed **/
+      let imageUrl = values.image || null;
 
-  async function onSubmit(data: EventFormValues) {
-    if (!user) return;
+      if (imageUrl && imageUrl.startsWith('data:')) {
+        const res = await fetch(imageUrl);
+        const blob = await res.blob();
+        const ext = blob.type.split('/')[1] || 'jpg';
 
-    let imageUrl = data.image;
-    // If image is a data URI, upload to storage and get public URL
-    if (imageUrl && imageUrl.startsWith('data:')) {
-      const res = await fetch(imageUrl);
-      const blob = await res.blob();
-      const fileExt = (blob.type.split('/')[1] || 'jpg').toLowerCase();
-      const filePath = `events/${user.id}/${Date.now()}.${fileExt}`;
-      try {
+        const filePath = `events/${user.id}/${Date.now()}.${ext}`;
+
         imageUrl = await uploadToStorage(blob, filePath, 'event-images');
-      } catch (e: any) {
+      }
+
+      /** 2️⃣ Prepare API payload **/
+      const payload = {
+        title: values.title,
+        description: values.description,
+        longDescription: values.longDescription || '',
+        date: values.date.toISOString(),
+        time: values.time,
+        venue: values.venue,
+        category: values.category,
+        tags: values.tags || [],
+        imageUrl: imageUrl, // Can be null (cleared) or new URL or old URL
+        clubName: values.clubName,
+        registrationLink: null,
+      };
+
+      /** 3️⃣ Get access token **/
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+
+      if (!token) {
         toast({
           variant: 'destructive',
-          title: 'Image Upload Failed',
-          description: e?.message || 'Could not upload image. Please try again.',
+          title: 'Could not get auth token!',
         });
         return;
       }
-    }
 
-    const eventData = {
-        // existing camelCase fields (kept for UI consumption)
-        ...data,
-        image: imageUrl || '',
-        date: data.date.toISOString(),
-        isPast: data.date < new Date(),
-        organizerId: user.id,
-        createdAt: new Date().toISOString(),
-        // snake_case fields for DB schema alignment
-        long_description: data.longDescription || null,
-        club: data.clubName,
-        image_url: imageUrl || null,
-        created_by: user.id,
-        is_completed: false,
-    } as any;
+      /** 4️⃣ Call server API **/
+      let url = '/api/events/create';
+      let method = 'POST';
 
-    if (existingEvent) {
-        // Update existing event
-        await updateDocumentNonBlocking('events', eventData, existingEvent.id);
-        toast({
-            title: 'Event Updated!',
-            description: 'Your event has been successfully updated.',
-        });
-        router.push(`/dashboard/events/${existingEvent.id}`);
-    } else {
-        // Create new event
-        await addDocumentNonBlocking('events', {
-            ...eventData,
-            registrationCount: 0,
-        });
-        toast({
-        title: 'Event Created!',
-        description: 'Your event has been successfully created.',
-        });
-        form.reset();
-        setSuggestedTags([]);
-        router.push('/dashboard/manage-events');
+      if (existingEvent) {
+          url = `/api/events/${existingEvent.id}`;
+          method = 'PUT';
+      }
+
+      const res = await fetch(url, {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Event creation/update failed');
+      }
+
+      toast({ title: existingEvent ? 'Event Updated Successfully!' : 'Event Created Successfully!' });
+      
+      if (!existingEvent) {
+          form.reset();
+          setSuggestedTags([]);
+      }
+      
+      router.push('/dashboard/manage-events');
+      router.refresh();
+      
+    } catch (err: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Operation failed!',
+        description: err.message,
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
-  const handleSuggestTags = () => {
-    startSuggestionTransition(async () => {
-      if (!descriptionValue || descriptionValue.trim().length < 20) {
-        toast({
-          variant: 'destructive',
-          title: 'Suggestion Failed',
-          description: "Description must be at least 20 characters long.",
-        });
-        return;
-      }
+  function addTag(tag: string) {
+    const tags = form.getValues('tags') || [];
+    if (!tags.includes(tag)) {
+      form.setValue('tags', [...tags, tag]);
+    }
+  }
+
+  function removeTag(tag: string) {
+    const tags = form.getValues('tags') || [];
+    form.setValue(
+      'tags',
+      tags.filter((t) => t !== tag)
+    );
+  }
+
+  async function handleSuggestTags() {
+    if (!descriptionValue || descriptionValue.length < 20) {
+      toast({
+        variant: 'destructive',
+        title: 'Description too short!',
+      });
+      return;
+    }
+    startSuggest(async () => {
       const result = await getSuggestedTags(descriptionValue);
-      if ('error' in result) {
-        toast({
-            variant: 'destructive',
-            title: 'Suggestion Failed',
-            description: result.error,
-        });
-        setSuggestedTags([]);
-      } else {
+      if ('tags' in result) {
         setSuggestedTags(result.tags);
       }
     });
-  };
-
-  const addTag = (tag: string) => {
-    const currentTags = form.getValues('tags') || [];
-    if (!currentTags.includes(tag)) {
-      form.setValue('tags', [...currentTags, tag]);
-    }
-  };
-
-  const removeTag = (tagToRemove: string) => {
-     const currentTags = form.getValues('tags') || [];
-     form.setValue('tags', currentTags.filter(tag => tag !== tagToRemove));
-  }
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUri = reader.result as string;
-        form.setValue('image', dataUri);
-        setImagePreview(dataUri);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  if (isUserLoading) {
-    return <Card><CardHeader><CardTitle>{existingEvent ? "Edit Event" : "Create a New Event"}</CardTitle></CardHeader><CardContent><Loader2 className="animate-spin" /> Loading form...</CardContent></Card>
   }
 
   if (!isOrganizer) {
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{existingEvent ? "Edit Event" : "Create a New Event"}</CardTitle>
-            </CardHeader>
-            <CardContent>
-                <p className="text-muted-foreground">You must be a club organizer to create or edit events.</p>
-            </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>You are not allowed</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p>You must be a club organizer to create events.</p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{existingEvent ? "Edit Event" : "Create a New Event"}</CardTitle>
+        <CardTitle>Create Event</CardTitle>
       </CardHeader>
+
       <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-            <div className="grid md:grid-cols-2 gap-8">
+
+            {/* Title + Club */}
+            <div className="grid md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
                 name="title"
@@ -265,40 +265,41 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                   <FormItem>
                     <FormLabel>Event Title</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Annual Tech Summit" {...field} />
+                      <Input placeholder="Tech Fest 2025" {...field} />
                     </FormControl>
-                    <FormMessage />
                   </FormItem>
                 )}
               />
-               <FormField
+
+              <FormField
                 control={form.control}
                 name="clubName"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Club Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Tech Club" {...field} />
+                      <Input placeholder="Developer Club" {...field} />
                     </FormControl>
-                    <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
-             <FormField
-                control={form.control}
-                name="venue"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Venue</FormLabel>
-                    <FormControl>
-                      <Input placeholder="e.g., Main Auditorium" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            
+
+            {/* Venue */}
+            <FormField
+              control={form.control}
+              name="venue"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Venue</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Main Auditorium" {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            {/* Description */}
             <FormField
               control={form.control}
               name="description"
@@ -307,17 +308,15 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                   <FormLabel>Short Description</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="A brief summary of the event."
-                      className="resize-none"
+                      placeholder="This appears on event cards"
                       {...field}
                     />
                   </FormControl>
-                   <FormDescription>This will be shown on event cards.</FormDescription>
-                  <FormMessage />
                 </FormItem>
               )}
             />
 
+            {/* Full details */}
             <FormField
               control={form.control}
               name="longDescription"
@@ -326,58 +325,51 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                   <FormLabel>Full Details</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Provide all the details about the event here."
-                      className="min-h-[200px]"
+                      placeholder="Full event details"
+                      className="min-h-[180px]"
                       {...field}
                     />
                   </FormControl>
-                  <FormMessage />
                 </FormItem>
               )}
             />
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-               <FormField
+            {/* Date, Time, Category */}
+            <div className="grid md:grid-cols-3 gap-6">
+
+              {/* Date */}
+              <FormField
                 control={form.control}
                 name="date"
                 render={({ field }) => (
-                  <FormItem className="flex flex-col">
+                  <FormItem>
                     <FormLabel>Date</FormLabel>
                     <Popover>
                       <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button
-                            variant={'outline'}
-                            className={cn(
-                              'w-full pl-3 text-left font-normal',
-                              !field.value && 'text-muted-foreground'
-                            )}
-                          >
-                            {field.value ? (
-                              format(field.value, 'PPP')
-                            ) : (
-                              <span>Pick a date</span>
-                            )}
-                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                          </Button>
-                        </FormControl>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            'w-full text-left',
+                            !field.value && 'text-muted-foreground'
+                          )}
+                        >
+                          {field.value ? format(field.value, 'PPP') : 'Pick a date'}
+                          <CalendarIcon className="ml-auto h-4 w-4" />
+                        </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
+                      <PopoverContent className="p-0">
                         <Calendar
                           mode="single"
                           selected={field.value}
                           onSelect={field.onChange}
-                          disabled={(date) =>
-                            !existingEvent && date < new Date(new Date().setDate(new Date().getDate() - 1))
-                          }
-                          initialFocus
                         />
                       </PopoverContent>
                     </Popover>
-                    <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {/* Time */}
               <FormField
                 control={form.control}
                 name="time"
@@ -387,56 +379,73 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                     <FormControl>
                       <Input type="time" {...field} />
                     </FormControl>
-                    <FormMessage />
                   </FormItem>
                 )}
               />
-                 <FormField
-                  control={form.control}
-                  name="category"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Category</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a category" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {categories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-            </div>
-             <div>
-                <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleSuggestTags}
-                    disabled={isSuggesting || !descriptionValue || descriptionValue.trim().length < 20}
-                >
-                    {isSuggesting ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    )}
-                    Suggest Tags with AI
-                </Button>
-                {suggestedTags.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                        <p className="text-sm font-medium">AI Suggestions (click to add):</p>
-                        <div className="flex flex-wrap gap-2">
-                            {suggestedTags.map(tag => (
-                                <Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => addTag(tag)}>{tag}</Badge>
-                            ))}
-                        </div>
-                    </div>
+
+              {/* Category */}
+              <FormField
+                control={form.control}
+                name="category"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Category</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                      </FormControl>
+
+                      <SelectContent>
+                        {categories.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
                 )}
+              />
+
             </div>
+
+            {/* AI Suggested Tags */}
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSuggestTags}
+                disabled={!descriptionValue || descriptionValue.length < 20}
+              >
+                {isSuggesting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-2" />
+                )}
+                Suggest Tags
+              </Button>
+
+              {suggestedTags.length > 0 && (
+                <div className="flex gap-2 mt-3 flex-wrap">
+                  {suggestedTags.map((tag) => (
+                    <Badge
+                      key={tag}
+                      className="cursor-pointer"
+                      onClick={() => addTag(tag)}
+                    >
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Tags */}
             <FormField
               control={form.control}
               name="tags"
@@ -444,28 +453,34 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                 <FormItem>
                   <FormLabel>Tags</FormLabel>
                   <FormControl>
-                     <div className="p-2 border rounded-md min-h-[40px]">
-                        {field.value && field.value.length > 0 ? (
-                             <div className="flex flex-wrap gap-2">
-                                {field.value.map(tag => (
-                                    <Badge key={tag} variant="default">
-                                        {tag}
-                                        <button type="button" onClick={() => removeTag(tag)} className="ml-1 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2">
-                                            <X className="h-3 w-3 text-primary-foreground hover:text-white" />
-                                        </button>
-                                    </Badge>
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="text-sm text-muted-foreground">Add tags to improve discoverability.</p>
-                        )}
+                    <div className="p-3 border rounded min-h-[50px]">
+                      {field.value && field.value.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {field.value.map((tag) => (
+                            <Badge key={tag}>
+                              {tag}
+                              <button
+                                type="button"
+                                onClick={() => removeTag(tag)}
+                                className="ml-2"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Add tags for better discovery
+                        </p>
+                      )}
                     </div>
                   </FormControl>
-                  <FormMessage />
                 </FormItem>
               )}
             />
-            
+
+            {/* Image Upload */}
             <FormField
               control={form.control}
               name="image"
@@ -473,34 +488,53 @@ export default function EventForm({ existingEvent }: EventFormProps) {
                 <FormItem>
                   <FormLabel>Event Poster</FormLabel>
                   <FormControl>
-                    <div className="flex items-center gap-4">
-                      <div className="w-48 h-32 rounded-lg border border-dashed flex items-center justify-center bg-muted/50 overflow-hidden">
+                    <div className="flex items-center gap-5">
+                      <div className="w-48 h-32 bg-muted/40 flex items-center justify-center rounded overflow-hidden">
                         {imagePreview ? (
-                          <Image src={imagePreview} alt="Event poster preview" width={192} height={128} className="object-cover w-full h-full" />
+                          <Image
+                            src={imagePreview}
+                            width={192}
+                            height={128}
+                            className="object-cover w-full h-full"
+                            alt="Poster preview"
+                          />
                         ) : (
-                          <div className="text-center text-muted-foreground p-2">
+                          <div className="text-center text-muted-foreground">
                             <Upload className="mx-auto h-8 w-8" />
-                            <p className="text-xs mt-1">Image Preview</p>
+                            <p className="text-xs mt-1">Preview</p>
                           </div>
                         )}
                       </div>
-                      <Input id="picture" type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                      <label htmlFor="picture" className={cn(buttonVariants({ variant: "outline" }), "cursor-pointer")}>
-                        <Upload className="mr-2 h-4 w-4"/>
+
+                      <input
+                        id="poster"
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                      />
+                      <label
+                        htmlFor="poster"
+                        className={cn(
+                          buttonVariants({ variant: 'outline' }),
+                          'cursor-pointer'
+                        )}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
                         Upload Image
                       </label>
                     </div>
                   </FormControl>
-                  <FormDescription>Upload a custom image for your event poster. Recommended aspect ratio is 3:2.</FormDescription>
-                  <FormMessage />
                 </FormItem>
               )}
             />
 
-
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {existingEvent ? 'Save Changes' : 'Create Event'}
+            {/* Submit */}
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              {existingEvent ? 'Update Event' : 'Create Event'}
             </Button>
           </form>
         </Form>
@@ -508,3 +542,4 @@ export default function EventForm({ existingEvent }: EventFormProps) {
     </Card>
   );
 }
+
